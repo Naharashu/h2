@@ -5,7 +5,7 @@
     Header-only library of H2 hash
     H2 hash algorithm by Naharashu (me)
     Apache 2.0 License
-    Version 1.0 2026-09-22
+    Version 1.1 2026-09-22
 */
 
 #include <cstdint>
@@ -109,6 +109,25 @@ inline uint64_t h2_hepler_arx_r(uint64_t start, uint64_t end, const uint64_t add
     return sum;
 }
 
+inline uint64_t sbox64(uint64_t x)
+{
+    uint64_t r = 0;
+
+    for (unsigned i = 0; i < 8; ++i)
+        r |= uint64_t(sbox[(x >> (i * 8)) & 0xff]) << (i * 8);
+
+    return r;
+}
+
+inline constexpr std::uint64_t H2_C1 = 0x9e3779b97f4a7c15ULL;
+inline constexpr std::uint64_t H2_C2 = 0xbb67ae8584caa73bULL;
+inline constexpr std::uint64_t H2_C3 = 0xb7e151628aed2a6aULL;
+inline constexpr std::uint64_t H2_C4 = 0xab1c5ed5da6d8118ULL;
+
+inline constexpr std::uint64_t H2_C5 = 0x6a09e667f3bcc908ULL;
+inline constexpr std::uint64_t H2_C6 = 0x1fffffffffffffffULL;
+inline constexpr std::uint64_t H2_C7 = 0xFFFFFFFFFFFFFF43ULL;
+
 uint256 h2_hash(const std::vector<uint8_t>& in) {
     uint256 hash = uint256{0,0,0,0};
     const uint64_t size = in.size();
@@ -133,11 +152,7 @@ uint256 h2_hash(const std::vector<uint8_t>& in) {
 
     hash.b = (arx_l(hash.b, hash.a, hash.d, 13) ^ 0xFFFFFFFFFFFFFF43);
 
-    uint64_t x =
-        uint64_t(sbox[hash.a & 0xff]) |
-        uint64_t(sbox[hash.b & 0xff]) << 8 |
-        uint64_t(sbox[hash.c & 0xff]) << 16 |
-        uint64_t(sbox[hash.d & 0xff]) << 24;
+    uint64_t x = sbox64(hash.a ^ hash.b ^ hash.c ^ hash.d);
 
     hash.c ^= (hash.c >> 13) + (hash.a << 17) + x;
 
