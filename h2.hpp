@@ -10,13 +10,14 @@
 
 #include <cstdint>
 #include <vector>
+#include <bit>
 struct uint256 {
     std::uint64_t a, b, c, d;
 };
 
 inline uint64_t h2_hepler_sum(uint64_t start, uint64_t end, const uint64_t& xor_with, const std::vector<uint8_t>& in) {
     uint64_t sum = 0;
-    for(uint64_t i=0;i<end;i++) {
+    for(uint64_t i=start;i<end;i++) {
         sum += in[i];
     }
     sum ^= xor_with;
@@ -42,8 +43,9 @@ inline uint64_t arx_r(const uint64_t& a,const uint64_t& b,const uint64_t& c, con
 
 inline uint64_t h2_hepler_arx_l(uint64_t start, uint64_t end, const uint64_t& add_with, const std::vector<uint8_t>& in) {
     uint64_t sum = 0;
-    for(uint64_t i=start;i-1<end;i++) {
+    for(uint64_t i=start;i+1<end;i++) {
         sum += arx_l(in[i], in[i+1], add_with, 41);
+	sum ^= ((uint16_t)in[i] + in[i+1]) ^ (std::rotl(in[i], 5));
     }
     sum += add_with;
     return sum;
@@ -64,7 +66,7 @@ uint256 h2_hash(const std::vector<uint8_t>& in) {
 
     hash.d = arx_r(hash.c, hash.a, hash.d, 33);
 
-    hash.a *= UINT64_MAX + hash.c;
+    hash.a *= (UINT64_MAX + hash.c);
 
     hash.b += hash.a ^ 0x6a09e667f3bcc908;
 
