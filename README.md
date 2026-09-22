@@ -1,6 +1,6 @@
 # H2 Hashing Function
 
-H2 is simple 256-bit hash function. It's not very fast but get's job done. `h2.hpp` is header-only C++20 implementation.
+H2 is simple 256-bit hash function. It's not very fast but get's job done. `h2.hpp` is header-only C++20 implementation. H2 it is direct successor to mine old [H1](https://github.com/Naharashu/HASH1) algorithm.
 
 # Perfomance 
 
