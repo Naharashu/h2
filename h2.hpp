@@ -71,8 +71,8 @@ inline uint64_t h2_hepler_sum(uint64_t start, uint64_t end, const uint64_t xor_w
         const uint8_t x = in[i];
 	uint64_t y=0;
 	std::memcpy(&y, &in[i], sizeof(y));
-        sum += x + 1;
-        sum += sbox64(y) ^ (sum << 13) ^ (sum + gmul11[sum&0xFF]);
+        sum += x + 1 ^ xor_with;
+        sum += sbox64(y) ^ (y << 13) ^ (y + gmul11[sum&0xFF]);
     }
     sum ^= xor_with;
     return sum;
@@ -84,8 +84,7 @@ inline uint64_t h2_hepler_xor(uint64_t start, uint64_t end, const uint64_t add_w
         const uint8_t x = in[i];
         uint64_t y=0;
 	std::memcpy(&y, &in[i], sizeof(y));
-        sum ^= y >> 3;
-        sum ^= y << 7;
+        sum ^= (y >> 3 | y << 13) + add_with;
         sum ^= ((uint64_t)gmul11[x] + gmul11[y&0xFF]) + (sum >> 37);
     }
     sum += add_with;
@@ -134,11 +133,15 @@ inline constexpr std::uint64_t H2_C5 = 0x6a09e667f3bcc908ULL;
 inline constexpr std::uint64_t H2_C6 = 0x1fffffffffffffffULL;
 inline constexpr std::uint64_t H2_C7 = 0xFFFFFFFFFFFFFF43ULL;
 
+uint64_t h2_inner_hash(uint64_t x) {
+	return (x ^ H2_C7 ^ H2_C3) + (x >> 13);
+}
+
 uint256 h2_hash(const std::vector<uint8_t>& in) {
     uint256 hash = uint256{0,0,0,0};
     const uint64_t size = in.size();
 
-    hash.a = h2_hepler_sum(0, size, 0x9e3779b97f4a7c15, in);
+    hash.a = h2_hepler_sum(0, size, 0x9e3779b97f4a7c15 ^ h2_inner_hash(size), in);
 
     hash.b = arx_l(hash.a, 31, 0xbb67ae8584caa73b, 13);
 
@@ -150,7 +153,7 @@ uint256 h2_hash(const std::vector<uint8_t>& in) {
 
     hash.d = arx_r(hash.c, hash.a, hash.d, 33);
 
-    hash.a *= hash.c ^ hash.d;
+    hash.a ^= hash.c *  sbox64(hash.d) * hash.d * h2_inner_hash(hash.c);
 
     hash.b += hash.a ^ 0x6a09e667f3bcc908;
 
@@ -164,13 +167,13 @@ uint256 h2_hash(const std::vector<uint8_t>& in) {
 
     hash.b ^= x ^ hash.d;
 
-    x =
-        uint64_t(gmul11[hash.d & 0xff]) |
-        uint64_t(sbox[hash.c & 0xff]) << 8 |
-        uint64_t(gmul11[hash.b & 0xff]) << 16 |
-        uint64_t(sbox[hash.a & 0xff]) << 24;
+    hash.d = h2_inner_hash(hash.d);
 
-    hash.a = x ^ hash.c;
+    hash.a = h2_inner_hash(hash.a);
+
+    hash.c = h2_inner_hash(hash.c);
+
+    hash.b = h2_inner_hash(hash.b);
     return hash;
 }
 
