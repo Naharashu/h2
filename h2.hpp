@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <vector>
 #include <bit>
+#include <cstring>
 struct uint256 {
     std::uint64_t a, b, c, d;
 };
@@ -54,12 +55,24 @@ static const unsigned char gmul11[] = {
 0xca,0xc1,0xdc,0xd7,0xe6,0xed,0xf0,0xfb,0x92,0x99,0x84,0x8f,0xbe,0xb5,0xa8,0xa3
 };
 
+inline uint64_t sbox64(uint64_t x)
+{
+    uint64_t r = 0;
+
+    for (unsigned i = 0; i < 8; ++i)
+        r |= uint64_t(sbox[(x >> (i * 8)) & 0xff]) << (i * 8);
+
+    return r;
+}
+
 inline uint64_t h2_hepler_sum(uint64_t start, uint64_t end, const uint64_t xor_with, const std::vector<uint8_t>& in) {
     uint64_t sum = 0;
-    for(uint64_t i=start;i<end;i++) {
+    for(uint64_t i=start;i+8<end;i+=8) {
         const uint8_t x = in[i];
+	uint64_t y=0;
+	std::memcpy(&y, &in[i], sizeof(y));
         sum += x + 1;
-        sum += (uint16_t)sbox[x] ^ (sum << 13) ^ (sum + gmul11[sum&0xFF]);
+        sum += sbox64(y) ^ (sum << 13) ^ (sum + gmul11[sum&0xFF]);
     }
     sum ^= xor_with;
     return sum;
@@ -67,11 +80,13 @@ inline uint64_t h2_hepler_sum(uint64_t start, uint64_t end, const uint64_t xor_w
 
 inline uint64_t h2_hepler_xor(uint64_t start, uint64_t end, const uint64_t add_with, const std::vector<uint8_t>& in) {
     uint64_t sum = 0;
-    for(uint64_t i=start;i<end;i++) {
+    for(uint64_t i=start;i+8<end;i+=8) {
         const uint8_t x = in[i];
-        sum ^= x >> 3;
-        sum ^= x << 7;
-        sum ^= ((uint64_t)gmul11[x] + gmul11[sum&0xFF]) + (sum >> 37);
+        uint64_t y=0;
+	std::memcpy(&y, &in[i], sizeof(y));
+        sum ^= y >> 3;
+        sum ^= y << 7;
+        sum ^= ((uint64_t)gmul11[x] + gmul11[y&0xFF]) + (sum >> 37);
     }
     sum += add_with;
     return sum;
@@ -109,15 +124,6 @@ inline uint64_t h2_hepler_arx_r(uint64_t start, uint64_t end, const uint64_t add
     return sum;
 }
 
-inline uint64_t sbox64(uint64_t x)
-{
-    uint64_t r = 0;
-
-    for (unsigned i = 0; i < 8; ++i)
-        r |= uint64_t(sbox[(x >> (i * 8)) & 0xff]) << (i * 8);
-
-    return r;
-}
 
 inline constexpr std::uint64_t H2_C1 = 0x9e3779b97f4a7c15ULL;
 inline constexpr std::uint64_t H2_C2 = 0xbb67ae8584caa73bULL;
