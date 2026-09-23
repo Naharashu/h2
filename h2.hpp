@@ -5,10 +5,11 @@
     Header-only library of H2 hash
     H2 hash algorithm by Naharashu (me)
     Apache 2.0 License
-    Version 1.1 2026-09-22
+    Version 1.2 2026-09-22
 */
 
 #include <cstdint>
+#include <span>
 #include <vector>
 #include <bit>
 #include <cstring>
@@ -65,27 +66,48 @@ inline uint64_t sbox64(uint64_t x)
     return r;
 }
 
-inline uint64_t h2_hepler_sum(uint64_t start, uint64_t end, const uint64_t xor_with, const std::vector<uint8_t>& in) {
+inline uint64_t gmul11_64(uint64_t x) {
+    uint64_t r = 0;
+
+    for (unsigned i = 0; i < 8; ++i)
+        r |= uint64_t(gmul11[(x >> (i * 8)) & 0xff]) << (i * 8);
+
+    return r;
+}
+
+inline uint64_t h2_hepler_sum(uint64_t start, uint64_t end, const uint64_t xor_with, const std::span<const uint8_t> in) {
     uint64_t sum = 0;
-    for(uint64_t i=start;i+8<end;i+=8) {
+    uint64_t i=start;
+    for(;i+8<=end;i+=8) {
         const uint8_t x = in[i];
-	uint64_t y=0;
-	std::memcpy(&y, &in[i], sizeof(y));
+	    uint64_t y=0;
+	    std::memcpy(&y, &in[i], sizeof(y));
         sum += x + 1 ^ xor_with;
-        sum += sbox64(y) ^ (y << 13) ^ (y + gmul11[sum&0xFF]);
+        sum += sbox64(y) ^ (y << 13) ^ (y + gmul11[x]);
+    }
+    for(;i<end;i++) {
+        const uint8_t x = in[i];
+        sum += x + 1 ^ xor_with;
+        sum += sbox64(x) ^ (x << 3) ^ (x + gmul11[x]);
     }
     sum ^= xor_with;
     return sum;
 }
 
-inline uint64_t h2_hepler_xor(uint64_t start, uint64_t end, const uint64_t add_with, const std::vector<uint8_t>& in) {
+
+inline uint64_t h2_hepler_xor(uint64_t start, uint64_t end, const uint64_t add_with, const std::span<const uint8_t> in) {
     uint64_t sum = 0;
-    for(uint64_t i=start;i+8<end;i+=8) {
-        const uint8_t x = in[i];
+    uint64_t i = start;
+    for(;i+8<=end;i+=8) {
         uint64_t y=0;
-	std::memcpy(&y, &in[i], sizeof(y));
-        sum ^= (y >> 3 | y << 13) + add_with;
-        sum ^= ((uint64_t)gmul11[x] + gmul11[y&0xFF]) + (sum >> 37);
+	    std::memcpy(&y, &in[i], sizeof(y));
+        sum ^= (y >> 3 | y << 13) + add_with ^ end;
+        sum ^= gmul11_64(y) + (sum >> 37);
+    }
+    for(;i<end;i++) {
+        uint8_t y=in[i];
+        sum ^= (y >> 3 | y << 13) + add_with ^ end;
+        sum ^= gmul11[y] + (sum >> 4);
     }
     sum += add_with;
     return sum;
@@ -99,7 +121,7 @@ inline uint64_t arx_r(const uint64_t a,const uint64_t b,const uint64_t c, const 
     return std::rotr((a + b) ^ c, d);
 }
 
-inline uint64_t h2_hepler_arx_l(uint64_t start, uint64_t end, const uint64_t add_with, const std::vector<uint8_t>& in) {
+inline uint64_t h2_hepler_arx_l(uint64_t start, uint64_t end, const uint64_t add_with, const std::span<const uint8_t> in) {
     uint64_t sum = 0;
     for(uint64_t i=start;i+1<end;i++) {
         const uint64_t x = in[i];
@@ -111,12 +133,12 @@ inline uint64_t h2_hepler_arx_l(uint64_t start, uint64_t end, const uint64_t add
     return sum;
 }
 
-inline uint64_t h2_hepler_arx_r(uint64_t start, uint64_t end, const uint64_t add_with, const std::vector<uint8_t>& in) {
+inline uint64_t h2_hepler_arx_r(uint64_t start, uint64_t end, const uint64_t add_with, const std::span<const uint8_t> in) {
     uint64_t sum = 0;
     for(uint64_t i=start;i+1<end;i++) {
         const uint64_t x = in[i];
         const uint64_t y = in[i+1];
-        sum += arx_l(x, y, add_with, 41);
+        sum += arx_r(x, y, add_with, 41);
 	    sum ^= (x + y) ^ (std::rotr(x, 5));
     }
     sum += add_with;
@@ -134,14 +156,19 @@ inline constexpr std::uint64_t H2_C6 = 0x1fffffffffffffffULL;
 inline constexpr std::uint64_t H2_C7 = 0xFFFFFFFFFFFFFF43ULL;
 
 uint64_t h2_inner_hash(uint64_t x) {
-	return (x ^ H2_C7 ^ H2_C3) + (x >> 13);
+	uint64_t state = x;
+    state ^= (state >> 13);
+    state *= H2_C3;
+    state ^= (state << 23) ^ H2_C1;
+    state ^= x >> 7;
+    return state;
 }
 
-uint256 h2_hash(const std::vector<uint8_t>& in) {
+uint256 h2_hash(const std::span<const uint8_t> in) {
     uint256 hash = uint256{0,0,0,0};
     const uint64_t size = in.size();
 
-    hash.a = h2_hepler_sum(0, size, 0x9e3779b97f4a7c15 ^ h2_inner_hash(size), in);
+    hash.a = h2_hepler_arx_l(0, size, 0x9e3779b97f4a7c15 ^ h2_inner_hash(size), in);
 
     hash.b = arx_l(hash.a, 31, 0xbb67ae8584caa73b, 13);
 
