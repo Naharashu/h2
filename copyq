@@ -1,0 +1,57 @@
+Benchmark 1: md5sum test.bin > /dev/null
+  Time (mean ± σ):       2.6 ms ±   0.3 ms    [User: 1.1 ms, System: 1.7 ms]
+  Range (min … max):     2.4 ms …   3.3 ms    10 runs
+ 
+Benchmark 2: sha1sum test.bin > /dev/null
+  Time (mean ± σ):       2.7 ms ±   0.5 ms    [User: 0.8 ms, System: 2.0 ms]
+  Range (min … max):     2.3 ms …   4.1 ms    10 runs
+ 
+Benchmark 3: sha224sum test.bin > /dev/null
+  Time (mean ± σ):       2.8 ms ±   0.4 ms    [User: 1.0 ms, System: 1.9 ms]
+  Range (min … max):     2.5 ms …   3.9 ms    10 runs
+ 
+Benchmark 4: sha256sum test.bin > /dev/null
+  Time (mean ± σ):       2.6 ms ±   0.1 ms    [User: 0.7 ms, System: 2.2 ms]
+  Range (min … max):     2.4 ms …   2.7 ms    10 runs
+ 
+Benchmark 5: sha384sum test.bin > /dev/null
+  Time (mean ± σ):       2.5 ms ±   0.3 ms    [User: 1.5 ms, System: 1.2 ms]
+  Range (min … max):     2.3 ms …   3.1 ms    10 runs
+ 
+Benchmark 6: sha512sum test.bin > /dev/null
+  Time (mean ± σ):       2.7 ms ±   0.6 ms    [User: 1.4 ms, System: 1.4 ms]
+  Range (min … max):     2.3 ms …   4.4 ms    10 runs
+ 
+Benchmark 7: xxhsum -H0 test.bin > /dev/null
+  Time (mean ± σ):       2.5 ms ±   0.1 ms    [User: 0.5 ms, System: 2.1 ms]
+  Range (min … max):     2.3 ms …   2.8 ms    10 runs
+ 
+Benchmark 8: xxhsum -H1 test.bin > /dev/null
+  Time (mean ± σ):       5.8 ms ±   2.6 ms    [User: 1.1 ms, System: 1.9 ms]
+  Range (min … max):     3.2 ms …  11.9 ms    10 runs
+ 
+Benchmark 9: b3sum test.bin > /dev/null
+  Time (mean ± σ):       4.9 ms ±   2.2 ms    [User: 1.1 ms, System: 2.7 ms]
+  Range (min … max):     2.2 ms …   8.4 ms    10 runs
+ 
+Benchmark 10: openssl dgst -md5 test.bin > /dev/null
+  Time (mean ± σ):       5.4 ms ±   0.5 ms    [User: 3.6 ms, System: 1.8 ms]
+  Range (min … max):     5.1 ms …   6.7 ms    10 runs
+ 
+Benchmark 11: openssl dgst -sha1 test.bin > /dev/null
+  Time (mean ± σ):       5.6 ms ±   0.6 ms    [User: 3.4 ms, System: 2.2 ms]
+  Range (min … max):     5.1 ms …   7.2 ms    10 runs
+ 
+Benchmark 12: openssl dgst -sha256 test.bin > /dev/null
+  Time (mean ± σ):       5.5 ms ±   0.2 ms    [User: 3.7 ms, System: 1.9 ms]
+  Range (min … max):     5.3 ms …   5.9 ms    10 runs
+ 
+Benchmark 13: openssl dgst -sha512 test.bin > /dev/null
+  Time (mean ± σ):       6.8 ms ±   1.0 ms    [User: 4.2 ms, System: 2.7 ms]
+  Range (min … max):     5.3 ms …   8.3 ms    10 runs
+ 
+Benchmark 14: ./h2sum test.bin > /dev/null
+  Time (mean ± σ):       2.3 ms ±   0.3 ms    [User: 1.0 ms, System: 1.4 ms]
+  Range (min … max):     2.1 ms …   2.9 ms    10 runs
+ 
+Benchmark 15: copy

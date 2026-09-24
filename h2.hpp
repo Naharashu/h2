@@ -5,7 +5,7 @@
     Header-only library of H2 hash
     H2 hash algorithm by Naharashu (me)
     Apache 2.0 License
-    Version 1.2 2026-09-22
+    Version 2.0 2026-09-24
 */
 
 #include <cstdint>
@@ -17,7 +17,7 @@ struct uint256 {
     std::uint64_t a, b, c, d;
 };
 
-static const unsigned char sbox[256] = 
+alignas(64) static const unsigned char sbox[256] = 
 {
    0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
    0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
@@ -37,7 +37,7 @@ static const unsigned char sbox[256] =
    0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16
 };
 
-static const unsigned char gmul11[] = {
+alignas(64) static const unsigned char gmul11[] = {
 0x00,0x0b,0x16,0x1d,0x2c,0x27,0x3a,0x31,0x58,0x53,0x4e,0x45,0x74,0x7f,0x62,0x69,
 0xb0,0xbb,0xa6,0xad,0x9c,0x97,0x8a,0x81,0xe8,0xe3,0xfe,0xf5,0xc4,0xcf,0xd2,0xd9,
 0x7b,0x70,0x6d,0x66,0x57,0x5c,0x41,0x4a,0x23,0x28,0x35,0x3e,0x0f,0x04,0x19,0x12,
@@ -113,12 +113,63 @@ inline uint64_t h2_hepler_xor(uint64_t start, uint64_t end, const uint64_t add_w
     return sum;
 }
 
+inline constexpr std::uint64_t H2_C1 = 0x9e3779b97f4a7c15ULL;
+inline constexpr std::uint64_t H2_C2 = 0xbb67ae8584caa73bULL;
+inline constexpr std::uint64_t H2_C3 = 0xb7e151628aed2a6aULL;
+inline constexpr std::uint64_t H2_C4 = 0xab1c5ed5da6d8118ULL;
+
+inline constexpr std::uint64_t H2_C5 = 0x6a09e667f3bcc908ULL;
+inline constexpr std::uint64_t H2_C6 = 0x1fffffffffffffffULL;
+inline constexpr std::uint64_t H2_C7 = 0xFFFFFFFFFFFFFF43ULL;
+
 inline uint64_t arx_l(const uint64_t a,const uint64_t b,const uint64_t c, const int& d) {
     return std::rotl((a + b) ^ c, d);
 }
 
 inline uint64_t arx_r(const uint64_t a,const uint64_t b,const uint64_t c, const int& d) {
     return std::rotr((a + b) ^ c, d);
+}
+
+
+void h2_round(uint256& u, const std::span<const uint8_t> in) {
+    /*
+    hash.a = h2_hepler_arx_l(0, size, 0x9e3779b97f4a7c15 ^ h2_inner_hash(size), in);
+
+    hash.b = arx_l(hash.a, 31, 0xbb67ae8584caa73b, 13);
+
+    hash.c = h2_hepler_xor(0, size, 0xb7e151628aed2a6a, in);
+
+    hash.d = h2_hepler_arx_l(0, size, 0xab1c5ed5da6d8118, in);
+    */
+
+    const uint64_t size = in.size();
+    uint64_t sum = 0;
+    uint64_t i=0;
+    uint64_t end = size;
+    for(;i+8<=end;i+=8) {
+        const uint64_t x = in[i];
+        const uint64_t z = in[i+1];
+        uint64_t y=0;
+	    std::memcpy(&y, &in[i], sizeof(y));
+        u.a += arx_l(x, z, H2_C1, 41);
+	    u.a ^= (x + z) ^ (std::rotl(x, 5));
+
+        u.c ^= (y >> 3 | y << 13) + H2_C3 ^ end;
+        u.c ^= gmul11_64(y) + (u.c >> 37);
+
+        u.d += arx_l(x, z, H2_C4, 41);
+	    u.d ^= (x + z) ^ (std::rotl(x, 5));
+    }
+    for(;i<end;i++) {
+        uint8_t y=in[i];
+        u.c ^= (y >> 3 | y << 13) + H2_C3 ^ end;
+        u.c ^= gmul11[y] + (u.c >> 4);
+    }
+    u.a += H2_C1;
+    u.d += H2_C4;
+    
+
+    u.b = arx_l(u.a, 31, H2_C2, 13);
 }
 
 inline uint64_t h2_hepler_arx_l(uint64_t start, uint64_t end, const uint64_t add_with, const std::span<const uint8_t> in) {
@@ -146,14 +197,6 @@ inline uint64_t h2_hepler_arx_r(uint64_t start, uint64_t end, const uint64_t add
 }
 
 
-inline constexpr std::uint64_t H2_C1 = 0x9e3779b97f4a7c15ULL;
-inline constexpr std::uint64_t H2_C2 = 0xbb67ae8584caa73bULL;
-inline constexpr std::uint64_t H2_C3 = 0xb7e151628aed2a6aULL;
-inline constexpr std::uint64_t H2_C4 = 0xab1c5ed5da6d8118ULL;
-
-inline constexpr std::uint64_t H2_C5 = 0x6a09e667f3bcc908ULL;
-inline constexpr std::uint64_t H2_C6 = 0x1fffffffffffffffULL;
-inline constexpr std::uint64_t H2_C7 = 0xFFFFFFFFFFFFFF43ULL;
 
 uint64_t h2_inner_hash(uint64_t x) {
 	uint64_t state = x;
@@ -168,6 +211,7 @@ uint256 h2_hash(const std::span<const uint8_t> in) {
     uint256 hash = uint256{0,0,0,0};
     const uint64_t size = in.size();
 
+    /*
     hash.a = h2_hepler_arx_l(0, size, 0x9e3779b97f4a7c15 ^ h2_inner_hash(size), in);
 
     hash.b = arx_l(hash.a, 31, 0xbb67ae8584caa73b, 13);
@@ -175,6 +219,9 @@ uint256 h2_hash(const std::span<const uint8_t> in) {
     hash.c = h2_hepler_xor(0, size, 0xb7e151628aed2a6a, in);
 
     hash.d = h2_hepler_arx_l(0, size, 0xab1c5ed5da6d8118, in);
+    */
+
+    h2_round(hash, in);
 
     hash.d ^= h2_hepler_sum(0, size, hash.a, in);
 
