@@ -122,7 +122,7 @@ inline constexpr std::uint64_t H2_C3 = 0xb7e151628aed2a6aULL;
 inline constexpr std::uint64_t H2_C4 = 0xab1c5ed5da6d8118ULL;
 
 inline constexpr std::uint64_t H2_C5 = 0x6a09e667f3bcc908ULL;
-inline constexpr std::uint64_t H2_C6 = 0x1fffffffffffffffULL;
+inline constexpr std::uint64_t H2_C6 = 0xA4D94E92C3B4A3D7ULL;
 inline constexpr std::uint64_t H2_C7 = 0xFFFFFFFFFFFFFF43ULL;
 
 inline uint64_t arx_l(const uint64_t a,const uint64_t b,const uint64_t c, const int& d) {
@@ -142,6 +142,8 @@ inline void h2_process_tail(uint256& u, const uint8_t* p, size_t n) {
 
         u.a ^= (uint64_t)sbox[y] + (std::rotl(u.c, y));
         u.b ^= (y << 5) + sbox64(u.a);
+
+        u.d ^= u.a;
     }
 }
 
@@ -157,13 +159,15 @@ inline void h2_process_block(uint256& u, const uint8_t* p)
     u.a ^= (x + z + y) ^ std::rotl(x, 5);
 
     u.c ^= (y >> 3 | y << 13) + H2_C3;
-    u.c ^= gmul11_64(y) + (u.c >> 37);
+    u.c ^= gmul11_64(y) ^ (u.c >> 37);
+
+    u.c ^= ((u.c >> 17) ^ (u.b << 13)) * H2_C3;
 
     u.d += arx_l(x, z, H2_C4, 41);
-    u.d ^= ((x * z) ^ y) ^ std::rotl(x, 5);
+    u.d ^= ((x * z) ^ y) ^ std::rotl(y, 5);
 
     u.b += arx_r(y, z, H2_C6, x);
-    u.b ^= (x ^ z ^ y) ^ std::rotr(x, 13);
+    u.b ^= ((x * z) ^ y) ^ std::rotr(y, 13);
 }
 
 inline void h2_round(uint256& u, std::span<const uint8_t> in)
@@ -184,6 +188,8 @@ inline void h2_round(uint256& u, std::span<const uint8_t> in)
     u.b ^= arx_r(u.d, u.a, u.b, 13);
 
     u.c = std::rotl(u.c, 13) ^ (u.b << 13) ^ (u.d >> 19);
+
+    u.a = std::rotr(u.a, 43) ^ std::rotl(u.b, 42);
 }
 
 inline uint64_t h2_hepler_arx_l(uint64_t start, uint64_t end, const uint64_t add_with, const std::span<const uint8_t> in) {
@@ -210,14 +216,15 @@ inline uint64_t h2_hepler_arx_r(uint64_t start, uint64_t end, const uint64_t add
     return sum;
 }
 
-
+/*
 uint64_t h2_inner_hash(uint64_t state, uint64_t prime) {
     state = (state ^ (state >> 30)) * 0xBF58476D1CE4E5B9ULL;
     state = (state ^ (state >> 27)) * 0x94D049BB133111EBULL;
-    return state ^ (state >> 31) * prime;
+    return state ^ (state >> 31);
 }
 
-/*
+/
+*/
 // Cross-platform 128-bit multiplication helper
 inline uint64_t h2_inner_hash(uint64_t state, uint64_t prime) {
 #if defined(__SIZEOF_INT128__) || defined(__clang__)
@@ -244,7 +251,7 @@ inline uint64_t h2_inner_hash(uint64_t state, uint64_t prime) {
     return low ^ high;
 #endif
 }
-*/
+
 
 uint256 h2_hash(const std::span<const uint8_t> in) {
     uint256 hash = uint256{0,0,0,0};
@@ -291,6 +298,8 @@ uint256 h2_hash(const std::span<const uint8_t> in) {
     }
     hash.a ^= hash.d;
     hash.c ^= hash.b;
+    hash.d ^= (hash.a * H2_C1);
+    hash.b ^= (hash.c >> 13);
     return hash;
 }
 
@@ -375,6 +384,8 @@ public:
 
         hash.a ^= hash.d;
         hash.c ^= hash.b;
+        hash.d ^= (hash.a * H2_C1);
+        hash.b ^= (hash.c >> 13);
 
         return hash;
     }
