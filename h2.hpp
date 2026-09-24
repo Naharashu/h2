@@ -8,6 +8,7 @@
     Version 2.0 2026-09-24
 */
 
+#include <atomic>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -16,6 +17,8 @@
 struct uint256 {
     std::uint64_t a, b, c, d;
 };
+
+
 
 alignas(64) static const unsigned char sbox[256] = 
 {
@@ -101,12 +104,12 @@ inline uint64_t h2_hepler_xor(uint64_t start, uint64_t end, const uint64_t add_w
     for(;i+8<=end;i+=8) {
         uint64_t y=0;
 	    std::memcpy(&y, &in[i], sizeof(y));
-        sum ^= (y >> 3 | y << 13) + add_with ^ end;
+        sum ^= (y >> 3 | y << 13) + add_with;
         sum ^= gmul11_64(y) + (sum >> 37);
     }
     for(;i<end;i++) {
         uint8_t y=in[i];
-        sum ^= (y >> 3 | y << 13) + add_with ^ end;
+        sum ^= (y >> 3 | y << 13) + add_with;
         sum ^= gmul11[y] + (sum >> 4);
     }
     sum += add_with;
@@ -130,46 +133,57 @@ inline uint64_t arx_r(const uint64_t a,const uint64_t b,const uint64_t c, const 
     return std::rotr((a + b) ^ c, d);
 }
 
+inline void h2_process_tail(uint256& u, const uint8_t* p, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+        const uint8_t y = p[i];
 
-void h2_round(uint256& u, const std::span<const uint8_t> in) {
-    /*
-    hash.a = h2_hepler_arx_l(0, size, 0x9e3779b97f4a7c15 ^ h2_inner_hash(size), in);
-
-    hash.b = arx_l(hash.a, 31, 0xbb67ae8584caa73b, 13);
-
-    hash.c = h2_hepler_xor(0, size, 0xb7e151628aed2a6a, in);
-
-    hash.d = h2_hepler_arx_l(0, size, 0xab1c5ed5da6d8118, in);
-    */
-
-    const uint64_t size = in.size();
-    uint64_t sum = 0;
-    uint64_t i=0;
-    uint64_t end = size;
-    for(;i+8<=end;i+=8) {
-        const uint64_t x = in[i];
-        const uint64_t z = in[i+1];
-        uint64_t y=0;
-	    std::memcpy(&y, &in[i], sizeof(y));
-        u.a += arx_l(x, z, H2_C1, 41);
-	    u.a ^= (x + z) ^ (std::rotl(x, 5));
-
-        u.c ^= (y >> 3 | y << 13) + H2_C3 ^ end;
-        u.c ^= gmul11_64(y) + (u.c >> 37);
-
-        u.d += arx_l(x, z, H2_C4, 41);
-	    u.d ^= (x + z) ^ (std::rotl(x, 5));
-    }
-    for(;i<end;i++) {
-        uint8_t y=in[i];
-        u.c ^= (y >> 3 | y << 13) + H2_C3 ^ end;
+        u.c ^= (y >> 3 | y << 13) + H2_C3;
         u.c ^= gmul11[y] + (u.c >> 4);
+
+        u.a ^= (uint64_t)sbox[y] + (std::rotl(u.c, y));
+        u.b ^= (y << 5) + sbox64(u.a);
     }
+}
+
+inline void h2_process_block(uint256& u, const uint8_t* p)
+{
+    const uint64_t x = p[0];
+    const uint64_t z = p[1];
+
+    uint64_t y;
+    std::memcpy(&y, p, sizeof(y));
+
+    u.a += arx_l(x, z, H2_C1, 57);
+    u.a ^= (x + z + y) ^ std::rotl(x, 5);
+
+    u.c ^= (y >> 3 | y << 13) + H2_C3;
+    u.c ^= gmul11_64(y) + (u.c >> 37);
+
+    u.d += arx_l(x, z, H2_C4, 41);
+    u.d ^= ((x * z) ^ y) ^ std::rotl(x, 5);
+
+    u.b += arx_r(y, z, H2_C6, x);
+    u.b ^= (x ^ z ^ y) ^ std::rotr(x, 13);
+}
+
+inline void h2_round(uint256& u, std::span<const uint8_t> in)
+{
+    size_t i = 0;
+
+    for (; i + 8 <= in.size(); i += 8)
+        h2_process_block(u, in.data() + i);
+
+    if (i < in.size())
+        h2_process_tail(u, in.data() + i, in.size() - i);
+
     u.a += H2_C1;
     u.d += H2_C4;
-    
+    u.d ^= u.a;
 
-    u.b = arx_l(u.a, 31, H2_C2, 13);
+    u.b ^= arx_l(u.a, 31, H2_C2, u.a&0xFF);
+    u.b ^= arx_r(u.d, u.a, u.b, 13);
+
+    u.c = std::rotl(u.c, 13) ^ (u.b << 13) ^ (u.d >> 19);
 }
 
 inline uint64_t h2_hepler_arx_l(uint64_t start, uint64_t end, const uint64_t add_with, const std::span<const uint8_t> in) {
@@ -197,15 +211,40 @@ inline uint64_t h2_hepler_arx_r(uint64_t start, uint64_t end, const uint64_t add
 }
 
 
-
-uint64_t h2_inner_hash(uint64_t x) {
-	uint64_t state = x;
-    state ^= (state >> 13);
-    state *= H2_C3;
-    state ^= (state << 23) ^ H2_C1;
-    state ^= x >> 7;
-    return state;
+uint64_t h2_inner_hash(uint64_t state, uint64_t prime) {
+    state = (state ^ (state >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    state = (state ^ (state >> 27)) * 0x94D049BB133111EBULL;
+    return state ^ (state >> 31) * prime;
 }
+
+/*
+// Cross-platform 128-bit multiplication helper
+inline uint64_t h2_inner_hash(uint64_t state, uint64_t prime) {
+#if defined(__SIZEOF_INT128__) || defined(__clang__)
+    unsigned __int128 product = (unsigned __int128)state * prime;
+    return (uint64_t)product ^ (uint64_t)(product >> 64);
+
+#elif defined(_MSC_VER) && defined(_M_X64)
+    #include <intrin.h>
+    uint64_t high;
+    uint64_t low = _umul128(state, prime, &high);
+    return low ^ high;
+
+#else
+    uint64_t ha = state >> 32; uint64_t la = (uint32_t)state;
+    uint64_t hb = prime >> 32; uint64_t lb = (uint32_t)prime;
+    uint64_t rh = ha * hb;
+    uint64_t rm0 = ha * lb;
+    uint64_t rm1 = hb * la;
+    uint64_t rl = la * lb;
+    uint64_t t = rl + (rm0 << 32);
+    uint64_t c = (t < rl) + (rm0 >> 32);
+    uint64_t low = t + (rm1 << 32);
+    uint64_t high = rh + c + (rm1 >> 32) + (low < t);
+    return low ^ high;
+#endif
+}
+*/
 
 uint256 h2_hash(const std::span<const uint8_t> in) {
     uint256 hash = uint256{0,0,0,0};
@@ -223,32 +262,149 @@ uint256 h2_hash(const std::span<const uint8_t> in) {
 
     h2_round(hash, in);
 
-    hash.d ^= h2_hepler_sum(0, size, hash.a, in);
+    // hash.d ^= h2_hepler_sum(0, size, hash.a, in);
 
     hash.d = arx_r(hash.c, hash.a, hash.d, 33);
 
-    hash.a ^= hash.c *  sbox64(hash.d) * hash.d * h2_inner_hash(hash.c);
+    hash.a ^= hash.c *
+                  sbox64(hash.d) *
+                  hash.d *
+                  h2_inner_hash(hash.c, H2_C2);
 
     hash.b += hash.a ^ 0x6a09e667f3bcc908;
 
     hash.d = arx_l(hash.d, 0x1fffffffffffffff, hash.a, 53);
 
-    hash.b = (arx_l(hash.b, hash.a, hash.d, 13) ^ 0xFFFFFFFFFFFFFF43);
+    hash.b = (arx_l(hash.b, hash.a, hash.d, 13) ^ H2_C7)+hash.a;
 
     uint64_t x = sbox64(hash.a ^ hash.b ^ hash.c ^ hash.d);
 
     hash.c ^= (hash.c >> 13) + (hash.a << 17) + x;
 
-    hash.b ^= x ^ hash.d;
+    hash.b ^= x ^ hash.d >> 13;
 
-    hash.d = h2_inner_hash(hash.d);
-
-    hash.a = h2_inner_hash(hash.a);
-
-    hash.c = h2_inner_hash(hash.c);
-
-    hash.b = h2_inner_hash(hash.b);
+    for(int i=0;i<4;i++) {
+            hash.d = h2_inner_hash(hash.d, H2_C3);
+            hash.a = h2_inner_hash(hash.a, H2_C6);
+            hash.c = h2_inner_hash(hash.c, H2_C7);
+            hash.b = h2_inner_hash(hash.b, H2_C4);
+    }
+    hash.a ^= hash.d;
+    hash.c ^= hash.b;
     return hash;
+}
+
+class H2HashStreaming {
+public:
+    void update(std::span<const uint8_t> data)
+    {
+        // Complete a previously buffered block.
+        if (buffer_size != 0) {
+            const size_t n =
+                std::min<size_t>(8 - buffer_size, data.size());
+
+            std::memcpy(
+                buffer + buffer_size,
+                data.data(),
+                n
+            );
+
+            buffer_size += n;
+            data = data.subspan(n);
+
+            if (buffer_size == 8) {
+                h2_process_block(state, buffer);
+                buffer_size = 0;
+            }
+        }
+
+        while (data.size() >= 8) {
+            h2_process_block(state, data.data());
+            data = data.subspan(8);
+        }
+
+        if (!data.empty()) {
+            std::memcpy(buffer, data.data(), data.size());
+            buffer_size = data.size();
+        }
+    }
+
+    uint256 finalize()
+    {
+        uint256 hash = state;
+
+        if (buffer_size != 0) {
+            h2_process_tail(hash, buffer, buffer_size);
+        }
+
+        hash.a += H2_C1;
+        hash.d += H2_C4;
+        hash.d ^= hash.a;
+
+        hash.b = arx_l(hash.a, 31, H2_C2, hash.a & 0xFF);
+        hash.b ^= hash.d;
+
+        hash.d = arx_r(hash.c, hash.a, hash.d, 33);
+
+        hash.a ^= hash.c *
+                  sbox64(hash.d) *
+                  hash.d *
+                  h2_inner_hash(hash.c, H2_C2);
+
+        hash.b += hash.a ^ H2_C5;
+
+        hash.d = arx_l(hash.d, H2_C6, hash.a, 53);
+
+        hash.b = (arx_l(hash.b, hash.a, hash.d, 13) ^ H2_C7)+hash.a;
+
+        uint64_t x =
+            sbox64(hash.a ^ hash.b ^ hash.c ^ hash.d);
+
+        hash.c ^= (hash.c >> 13) +
+                  (hash.a << 17) +
+                  x;
+
+        hash.b ^= x ^ (hash.d>>13);
+
+        for(int i=0;i<4;i++) {
+            hash.d = h2_inner_hash(hash.d, H2_C3);
+            hash.a = h2_inner_hash(hash.a, H2_C6);
+            hash.c = h2_inner_hash(hash.c, H2_C7);
+            hash.b = h2_inner_hash(hash.b, H2_C4);
+        }
+
+        hash.a ^= hash.d;
+        hash.c ^= hash.b;
+
+        return hash;
+    }
+
+    void reset()
+    {
+        state = {0, 0, 0, 0};
+        buffer_size = 0;
+    }
+
+private:
+    uint256 state{0, 0, 0, 0};
+
+    uint8_t buffer[8]{};
+    size_t buffer_size = 0;
+};
+
+void H2_SMHasher(const void* key, int len, uint32_t seed, void* out)
+{
+    auto input = std::span<const uint8_t>(
+        static_cast<const uint8_t*>(key),
+        static_cast<size_t>(len)
+    );
+
+    uint256 h = h2_hash(input);
+
+    std::memcpy(static_cast<uint8_t*>(out) +  0, &h.a, 8);
+    std::memcpy(static_cast<uint8_t*>(out) +  8, &h.b, 8);
+    std::memcpy(static_cast<uint8_t*>(out) + 16, &h.c, 8);
+    std::memcpy(static_cast<uint8_t*>(out) + 24, &h.d, 8);
 }
 
 #endif

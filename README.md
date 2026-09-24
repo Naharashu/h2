@@ -6,8 +6,17 @@ H2 is simple 256-bit hash function. It's not very fast but get's job done. `h2.h
 
 Everything tested on i3-3120m x64 cpu with -O3 and -march=native
 
+### Incremental hashing with 1MB block size:
 
-| Compiler | 64B Input | 1024B input | 65KB input | Avarage |
-| -------- | -------- | -------- | -------- | -------- |
-| Clang 22.1.8 | 191.49 MB/s  | 213.68 MB/s | **215.62 MB/s** | **206.93 MB/s**  |
-| GCC 16.2.1 |  191.49 MB/s | **217.18 MB/s**  | 204.71 MB/s  | 204.46 MB/s  |
+| Compiler | 64B Input | 1024B input | 64KB input | 16 MB input | Avarage |
+| -------- | -------- | -------- | -------- | -------- | -------- |
+| Clang 22.1.8 | 541.42 MB/s | **947.73 MB/s** | **997.44 MB/s** | **989.62 MB/s** | 869,05 MB/s |
+| GCC 16.2.1   | **626.92 MB/s** | 932.10 MB/s | 986.17 MB/s | 981.72 MB/s | **881.72 MB/s** |
+
+
+### Sequential hashing:
+
+| Compiler | 64B Input | 1024B input | 64KB input | 16 MB input | Avarage |
+| -------- | -------- | -------- | -------- | -------- | -------- |
+| Clang 22.1.8 | 541.42 MB/s | **947.73 MB/s** | **997.44 MB/s** | **989.62 MB/s** | 869,05 MB/s |
+| GCC 16.2.1   | **626.92 MB/s** | 932.10 MB/s | 986.17 MB/s | 981.72 MB/s | **881.72 MB/s** |

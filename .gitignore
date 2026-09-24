@@ -1,2 +1,3 @@
 ./main.cpp
-*.cpp
+main2.cpp
+SMHasher
