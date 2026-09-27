@@ -5,7 +5,7 @@
     Header-only library of H2 hash
     H2 hash algorithm by Naharashu (me)
     Apache 2.0 License
-    Version 2.0 2026-09-24
+    Version 1.0 2026-09-24
 */
 
 #include <atomic>
@@ -14,13 +14,54 @@
 #include <vector>
 #include <bit>
 #include <cstring>
-struct uint256 {
-    std::uint64_t a, b, c, d;
+
+union uint256 {
+    struct { uint64_t a, b, c, d; };
+    uint64_t v[4];
 };
 
 
+#if defined(_MSC_VER) && defined(_M_X64)
+    #include <intrin.h>
+#endif
 
-alignas(64) static const unsigned char sbox[256] = 
+inline uint64_t mum_mix(uint64_t state, uint64_t prime) {
+#if defined(__SIZEOF_INT128__) || defined(__clang__)
+    unsigned __int128 product = (unsigned __int128)state * prime;
+    return (uint64_t)product ^ (uint64_t)(product >> 64) ^ state ^ prime;
+
+#elif defined(_MSC_VER) && defined(_M_X64)
+    uint64_t high;
+    uint64_t low = _umul128(state, prime, &high);
+    return low ^ high ^ state ^ prime;
+
+#else
+    uint64_t ha = state >> 32; uint64_t la = (uint32_t)state;
+    uint64_t hb = prime >> 32; uint64_t lb = (uint32_t)prime;
+    uint64_t rh = ha * hb;
+    uint64_t rm0 = ha * lb;
+    uint64_t rm1 = hb * la;
+    uint64_t rl = la * lb;
+    uint64_t t = rl + (rm0 << 32);
+    uint64_t c = (t < rl) + (rm0 >> 32);
+    uint64_t low = t + (rm1 << 32);
+    uint64_t high = rh + c + (rm1 >> 32) + (low < t);
+    return low ^ high ^ state ^ prime;
+#endif
+}
+
+
+uint64_t splitmix(uint64_t state) {
+    state = (state ^ (state >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    state = (state ^ (state >> 27)) * 0x94D049BB133111EBULL;
+    return state ^ (state >> 31);
+}
+
+
+
+
+
+alignas(64) static constexpr unsigned char sbox[256] = 
 {
    0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
    0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
@@ -40,7 +81,7 @@ alignas(64) static const unsigned char sbox[256] =
    0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16
 };
 
-alignas(64) static const unsigned char gmul11[] = {
+alignas(64) static constexpr unsigned char gmul11[] = {
 0x00,0x0b,0x16,0x1d,0x2c,0x27,0x3a,0x31,0x58,0x53,0x4e,0x45,0x74,0x7f,0x62,0x69,
 0xb0,0xbb,0xa6,0xad,0x9c,0x97,0x8a,0x81,0xe8,0xe3,0xfe,0xf5,0xc4,0xcf,0xd2,0xd9,
 0x7b,0x70,0x6d,0x66,0x57,0x5c,0x41,0x4a,0x23,0x28,0x35,0x3e,0x0f,0x04,0x19,0x12,
@@ -59,62 +100,31 @@ alignas(64) static const unsigned char gmul11[] = {
 0xca,0xc1,0xdc,0xd7,0xe6,0xed,0xf0,0xfb,0x92,0x99,0x84,0x8f,0xbe,0xb5,0xa8,0xa3
 };
 
-inline uint64_t sbox64(uint64_t x)
-{
-    uint64_t r = 0;
 
-    for (unsigned i = 0; i < 8; ++i)
-        r |= uint64_t(sbox[(x >> (i * 8)) & 0xff]) << (i * 8);
 
-    return r;
+inline uint64_t sbox64(uint64_t x) {
+    return uint64_t(sbox[ x        & 0xff])       |
+          (uint64_t(sbox[(x >>  8) & 0xff]) <<  8) |
+          (uint64_t(sbox[(x >> 16) & 0xff]) << 16) |
+          (uint64_t(sbox[(x >> 24) & 0xff]) << 24) |
+          (uint64_t(sbox[(x >> 32) & 0xff]) << 32) |
+          (uint64_t(sbox[(x >> 40) & 0xff]) << 40) |
+          (uint64_t(sbox[(x >> 48) & 0xff]) << 48) |
+          (uint64_t(sbox[(x >> 56)        ]) << 56);
 }
 
 inline uint64_t gmul11_64(uint64_t x) {
-    uint64_t r = 0;
-
-    for (unsigned i = 0; i < 8; ++i)
-        r |= uint64_t(gmul11[(x >> (i * 8)) & 0xff]) << (i * 8);
-
-    return r;
-}
-
-inline uint64_t h2_hepler_sum(uint64_t start, uint64_t end, const uint64_t xor_with, const std::span<const uint8_t> in) {
-    uint64_t sum = 0;
-    uint64_t i=start;
-    for(;i+8<=end;i+=8) {
-        const uint8_t x = in[i];
-	    uint64_t y=0;
-	    std::memcpy(&y, &in[i], sizeof(y));
-        sum += x + 1 ^ xor_with;
-        sum += sbox64(y) ^ (y << 13) ^ (y + gmul11[x]);
-    }
-    for(;i<end;i++) {
-        const uint8_t x = in[i];
-        sum += x + 1 ^ xor_with;
-        sum += sbox64(x) ^ (x << 3) ^ (x + gmul11[x]);
-    }
-    sum ^= xor_with;
-    return sum;
+    return uint64_t(gmul11[ x        & 0xff])       |
+          (uint64_t(gmul11[(x >>  8) & 0xff]) <<  8) |
+          (uint64_t(gmul11[(x >> 16) & 0xff]) << 16) |
+          (uint64_t(gmul11[(x >> 24) & 0xff]) << 24) |
+          (uint64_t(gmul11[(x >> 32) & 0xff]) << 32) |
+          (uint64_t(gmul11[(x >> 40) & 0xff]) << 40) |
+          (uint64_t(gmul11[(x >> 48) & 0xff]) << 48) |
+          (uint64_t(gmul11[(x >> 56)        ]) << 56);
 }
 
 
-inline uint64_t h2_hepler_xor(uint64_t start, uint64_t end, const uint64_t add_with, const std::span<const uint8_t> in) {
-    uint64_t sum = 0;
-    uint64_t i = start;
-    for(;i+8<=end;i+=8) {
-        uint64_t y=0;
-	    std::memcpy(&y, &in[i], sizeof(y));
-        sum ^= (y >> 3 | y << 13) + add_with;
-        sum ^= gmul11_64(y) + (sum >> 37);
-    }
-    for(;i<end;i++) {
-        uint8_t y=in[i];
-        sum ^= (y >> 3 | y << 13) + add_with;
-        sum ^= gmul11[y] + (sum >> 4);
-    }
-    sum += add_with;
-    return sum;
-}
 
 inline constexpr std::uint64_t H2_C1 = 0x9e3779b97f4a7c15ULL;
 inline constexpr std::uint64_t H2_C2 = 0xbb67ae8584caa73bULL;
@@ -125,181 +135,155 @@ inline constexpr std::uint64_t H2_C5 = 0x6a09e667f3bcc908ULL;
 inline constexpr std::uint64_t H2_C6 = 0xA4D94E92C3B4A3D7ULL;
 inline constexpr std::uint64_t H2_C7 = 0xFFFFFFFFFFFFFF43ULL;
 
-inline uint64_t arx_l(const uint64_t a,const uint64_t b,const uint64_t c, const int& d) {
+#include <cstdint>
+
+inline constexpr std::uint64_t SQRT_2  = 0x3FF6A09E667F3BCDULL; // ~1.4142
+inline constexpr std::uint64_t SQRT_3  = 0x3FFBB67AE8584CAAULL; // ~1.7321
+inline constexpr std::uint64_t SQRT_5  = 0x4001E3779B97F4A8ULL; // ~2.2361
+inline constexpr std::uint64_t SQRT_6  = 0x4003988E1409212EULL; // ~2.4495
+inline constexpr std::uint64_t SQRT_7  = 0x40052A7FA9D2F8EAULL; // ~2.6458
+inline constexpr std::uint64_t SQRT_8  = 0x4006A09E667F3BCDULL; // ~2.8284
+inline constexpr std::uint64_t SQRT_10 = 0x40094C583ADA5B53ULL; // ~3.1623
+inline constexpr std::uint64_t SQRT_11 = 0x400A887293FD6F34ULL; // ~3.3166
+inline constexpr std::uint64_t SQRT_12 = 0x400BB67AE8584CAAULL; // ~3.4641
+inline constexpr std::uint64_t SQRT_13 = 0x400CD82B446159F3ULL; // ~3.6056
+inline constexpr std::uint64_t SQRT_14 = 0x400DEEEA11683F49ULL; // ~3.7417
+inline constexpr std::uint64_t SQRT_15 = 0x400EFBDEB14F4EDAULL; // ~3.8730
+
+static constexpr uint64_t J_MIX[4] = {H2_C1, H2_C2, H2_C3, H2_C4};
+static constexpr uint64_t J_MIX2[4] = {SQRT_2, SQRT_5, SQRT_7, SQRT_13};
+
+
+static constexpr unsigned char Rcon[256] = {
+0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a, 0x2f, 0x5e, 0xbc, 0x63, 0xc6, 0x97, 0x35, 0x6a, 0xd4, 0xb3, 0x7d, 0xfa, 0xef, 0xc5, 0x91, 0x39, 0x72, 0xe4, 0xd3, 0xbd, 0x61, 0xc2, 0x9f, 0x25, 0x4a, 0x94, 0x33, 0x66, 0xcc, 0x83, 0x1d, 0x3a, 0x74, 0xe8, 0xcb, 0x08
+};
+
+
+inline constexpr std::array<uint64_t, 256> pregenerate_mixtable(uint64_t in) {
+    std::array<uint64_t, 256> table{};
+    for(int i = 0; i < 256; i++) {
+        uint64_t base = in * SQRT_7 + i;
+        uint64_t sum = static_cast<uint64_t>(sbox[i]) + gmul11[i] + Rcon[i];
+        uint64_t val = (sum * 0x94D049BB133111EBULL) ^ (sum * SQRT_3);
+        table[i] = base ^ val;
+    }
+    return table;
+}
+
+inline constexpr std::array<uint64_t, 256> MIXTABLE = pregenerate_mixtable(SQRT_2);
+
+inline uint64_t mixtable_64(uint64_t x) {
+    uint8_t idx = (uint8_t)(x ^ (x>>8) ^ (x>>16) ^ (x>>24)
+                              ^ (x>>32) ^ (x>>40) ^ (x>>48) ^ (x>>56));
+    return MIXTABLE[idx];
+}
+
+inline uint64_t arx_l(const uint64_t a,const uint64_t b,const uint64_t c, int d) {
     return std::rotl((a + b) ^ c, d);
 }
 
-inline uint64_t arx_r(const uint64_t a,const uint64_t b,const uint64_t c, const int& d) {
+inline uint64_t arx_r(const uint64_t a,const uint64_t b,const uint64_t c, int d) {
     return std::rotr((a + b) ^ c, d);
 }
 
+inline constexpr std::uint64_t choose(std::uint64_t x, std::uint64_t y, std::uint64_t z) {
+    return (x & y) ^ (~x & z);
+}
+
+
+
 inline void h2_process_tail(uint256& u, const uint8_t* p, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        const uint8_t y = p[i];
+    for (size_t i = 0; i < n;) {
 
-        u.c ^= (y >> 3 | y << 13) + H2_C3;
-        u.c ^= gmul11[y] + (u.c >> 4);
-
-        u.a ^= (uint64_t)sbox[y] + (std::rotl(u.c, y));
-        u.b ^= (y << 5) + sbox64(u.a);
-
-        u.d ^= u.a;
+        if(i+8<=n) {
+            uint64_t w;
+            std::memcpy(&w, p+i, sizeof(w));
+            const uint64_t wx = std::rotr(w, 13) ^ std::rotl(w, 17);
+            #pragma omp simd
+            for(int j=0;j<4;j++) {
+                u.v[j] += wx;
+                u.v[j] ^= mum_mix(w^J_MIX[j], SQRT_11);
+                u.v[j] = std::rotl(u.v[j], j*j+3);
+            }
+            i+=8;
+        } else {
+            const uint64_t y = p[i] ^ SQRT_13;
+            for(int j=0;j<4;j++) {
+                u.v[j] ^= arx_l(y, j, H2_C3, 13) ^ MIXTABLE[y&0xFF];
+                u.v[j] ^= mum_mix(u.v[j], J_MIX2[j]);
+                u.v[j] *= (arx_r(u.v[j], y, H2_C1, 13) ^ MIXTABLE[y&0xFF]) | 1;
+            }
+            ++i;
+        }
     }
 }
 
 inline void h2_process_block(uint256& u, const uint8_t* p)
 {
-    const uint64_t x = p[0];
-    const uint64_t z = p[1];
+    uint64_t w[4];
+    std::memcpy(&w, p, sizeof(w));
 
-    uint64_t y;
-    std::memcpy(&y, p, sizeof(y));
+    uint64_t wx = std::rotl(w[0], 17) ^ std::rotr(w[1], 13) ^ std::rotl(w[2], 31) ^ std::rotr(w[3], 27); 
 
-    u.a += arx_l(x, z, H2_C1, 57);
-    u.a ^= (x + z + y) ^ std::rotl(x, 5);
+    for(int i=0;i<4;i++) {
+        const uint64_t m = mum_mix(w[i]^wx, H2_C1);
+        const uint64_t c = choose(sbox64(w[i]), w[i]*H2_C1, w[i]*SQRT_7) * SQRT_5;
+        const uint64_t t = mixtable_64(w[i]);
+        const uint64_t r = std::rotl(w[i], i+13) ^ std::rotr(w[i], i+17);
 
-    u.c ^= (y >> 3 | y << 13) + H2_C3;
-    u.c ^= gmul11_64(y) ^ (u.c >> 37);
-
-    u.c ^= ((u.c >> 17) ^ (u.b << 13)) * H2_C3;
-
-    u.d += arx_l(x, z, H2_C4, 41);
-    u.d ^= ((x * z) ^ y) ^ std::rotl(y, 5);
-
-    u.b += arx_r(y, z, H2_C6, x);
-    u.b ^= ((x * z) ^ y) ^ std::rotr(y, 13);
+        u.v[i] = gmul11_64(u.v[i] ^ m ^ r) ^ c ^ t;
+    }
 }
 
 inline void h2_round(uint256& u, std::span<const uint8_t> in)
 {
     size_t i = 0;
 
-    for (; i + 8 <= in.size(); i += 8)
+    for(; i + 32 <= in.size(); i += 32) {
+        if (i + 256 < in.size()) __builtin_prefetch(in.data() + i + 256, 0, 0);
         h2_process_block(u, in.data() + i);
+    }
 
     if (i < in.size())
         h2_process_tail(u, in.data() + i, in.size() - i);
 
-    u.a += H2_C1;
-    u.d += H2_C4;
-    u.d ^= u.a;
 
-    u.b ^= arx_l(u.a, 31, H2_C2, u.a&0xFF);
-    u.b ^= arx_r(u.d, u.a, u.b, 13);
+    u.a ^= std::rotl(u.b, 13);
+    u.c ^= std::rotl(u.d, 29);
+    u.b ^= mum_mix(u.c, SQRT_7);
+    u.d ^= mum_mix(u.a, SQRT_11);
 
-    u.c = std::rotl(u.c, 13) ^ (u.b << 13) ^ (u.d >> 19);
-
-    u.a = std::rotr(u.a, 43) ^ std::rotl(u.b, 42);
-}
-
-inline uint64_t h2_hepler_arx_l(uint64_t start, uint64_t end, const uint64_t add_with, const std::span<const uint8_t> in) {
-    uint64_t sum = 0;
-    for(uint64_t i=start;i+1<end;i++) {
-        const uint64_t x = in[i];
-        const uint64_t y = in[i+1];
-        sum += arx_l(x, y, add_with, 41);
-	    sum ^= (x + y) ^ (std::rotl(x, 5));
-    }
-    sum += add_with;
-    return sum;
-}
-
-inline uint64_t h2_hepler_arx_r(uint64_t start, uint64_t end, const uint64_t add_with, const std::span<const uint8_t> in) {
-    uint64_t sum = 0;
-    for(uint64_t i=start;i+1<end;i++) {
-        const uint64_t x = in[i];
-        const uint64_t y = in[i+1];
-        sum += arx_r(x, y, add_with, 41);
-	    sum ^= (x + y) ^ (std::rotr(x, 5));
-    }
-    sum += add_with;
-    return sum;
-}
-
-/*
-uint64_t h2_inner_hash(uint64_t state, uint64_t prime) {
-    state = (state ^ (state >> 30)) * 0xBF58476D1CE4E5B9ULL;
-    state = (state ^ (state >> 27)) * 0x94D049BB133111EBULL;
-    return state ^ (state >> 31);
-}
-
-/
-*/
-// Cross-platform 128-bit multiplication helper
-inline uint64_t h2_inner_hash(uint64_t state, uint64_t prime) {
-#if defined(__SIZEOF_INT128__) || defined(__clang__)
-    unsigned __int128 product = (unsigned __int128)state * prime;
-    return (uint64_t)product ^ (uint64_t)(product >> 64);
-
-#elif defined(_MSC_VER) && defined(_M_X64)
-    #include <intrin.h>
-    uint64_t high;
-    uint64_t low = _umul128(state, prime, &high);
-    return low ^ high;
-
-#else
-    uint64_t ha = state >> 32; uint64_t la = (uint32_t)state;
-    uint64_t hb = prime >> 32; uint64_t lb = (uint32_t)prime;
-    uint64_t rh = ha * hb;
-    uint64_t rm0 = ha * lb;
-    uint64_t rm1 = hb * la;
-    uint64_t rl = la * lb;
-    uint64_t t = rl + (rm0 << 32);
-    uint64_t c = (t < rl) + (rm0 >> 32);
-    uint64_t low = t + (rm1 << 32);
-    uint64_t high = rh + c + (rm1 >> 32) + (low < t);
-    return low ^ high;
-#endif
+    const uint64_t t0 = u.a * SQRT_11;
+    const uint64_t t1 = u.b * SQRT_7;
+    const uint64_t t2 = u.c * SQRT_5;
+    const uint64_t t3 = u.d * SQRT_2;
+    u.a ^= t3; u.b ^= t2; u.c ^= t1; u.d ^= t0;
+    for(int j=0;j<4;j++) u.v[j] = mum_mix(u.v[j], SQRT_11);
 }
 
 
 uint256 h2_hash(const std::span<const uint8_t> in) {
-    uint256 hash = uint256{0,0,0,0};
+    uint256 hash{H2_C1, H2_C2, H2_C3, H2_C4};
     const uint64_t size = in.size();
-
-    /*
-    hash.a = h2_hepler_arx_l(0, size, 0x9e3779b97f4a7c15 ^ h2_inner_hash(size), in);
-
-    hash.b = arx_l(hash.a, 31, 0xbb67ae8584caa73b, 13);
-
-    hash.c = h2_hepler_xor(0, size, 0xb7e151628aed2a6a, in);
-
-    hash.d = h2_hepler_arx_l(0, size, 0xab1c5ed5da6d8118, in);
-    */
 
     h2_round(hash, in);
 
-    // hash.d ^= h2_hepler_sum(0, size, hash.a, in);
-
-    hash.d = arx_r(hash.c, hash.a, hash.d, 33);
-
-    hash.a ^= hash.c *
-                  sbox64(hash.d) *
-                  hash.d *
-                  h2_inner_hash(hash.c, H2_C2);
-
-    hash.b += hash.a ^ 0x6a09e667f3bcc908;
-
-    hash.d = arx_l(hash.d, 0x1fffffffffffffff, hash.a, 53);
-
-    hash.b = (arx_l(hash.b, hash.a, hash.d, 13) ^ H2_C7)+hash.a;
-
-    uint64_t x = sbox64(hash.a ^ hash.b ^ hash.c ^ hash.d);
-
-    hash.c ^= (hash.c >> 13) + (hash.a << 17) + x;
-
-    hash.b ^= x ^ hash.d >> 13;
-
     for(int i=0;i<4;i++) {
-            hash.d = h2_inner_hash(hash.d, H2_C3);
-            hash.a = h2_inner_hash(hash.a, H2_C6);
-            hash.c = h2_inner_hash(hash.c, H2_C7);
-            hash.b = h2_inner_hash(hash.b, H2_C4);
-    }
-    hash.a ^= hash.d;
-    hash.c ^= hash.b;
-    hash.d ^= (hash.a * H2_C1);
-    hash.b ^= (hash.c >> 13);
+        for(int j=0;j<4;j++) {
+            hash.v[j] ^= (arx_r(hash.v[i], 11, SQRT_5, i+j) ^ SQRT_3) + size;
+        }
+        hash.v[i] = mum_mix(hash.v[i], SQRT_7);
+    }    
+
+    uint64_t ta = splitmix(hash.d);
+    uint64_t tb = splitmix(hash.c);
+    uint64_t tc = splitmix(hash.b);
+    uint64_t td = splitmix(hash.a);
+
+    hash.a ^= ta;
+    hash.b ^= tb;
+    hash.c ^= tc;
+    hash.d ^= td;
     return hash;
 }
 
@@ -307,10 +291,10 @@ class H2HashStreaming {
 public:
     void update(std::span<const uint8_t> data)
     {
-        // Complete a previously buffered block.
+        size+=data.size();
         if (buffer_size != 0) {
             const size_t n =
-                std::min<size_t>(8 - buffer_size, data.size());
+                std::min<size_t>(32 - buffer_size, data.size());
 
             std::memcpy(
                 buffer + buffer_size,
@@ -321,15 +305,15 @@ public:
             buffer_size += n;
             data = data.subspan(n);
 
-            if (buffer_size == 8) {
+            if (buffer_size == 32) {
                 h2_process_block(state, buffer);
                 buffer_size = 0;
             }
         }
 
-        while (data.size() >= 8) {
+        while (data.size() >= 32) {
             h2_process_block(state, data.data());
-            data = data.subspan(8);
+            data = data.subspan(32);
         }
 
         if (!data.empty()) {
@@ -346,61 +330,51 @@ public:
             h2_process_tail(hash, buffer, buffer_size);
         }
 
-        hash.a += H2_C1;
-        hash.d += H2_C4;
-        hash.d ^= hash.a;
+        hash.a ^= std::rotl(hash.b, 13);
+        hash.c ^= std::rotl(hash.d, 29);
+        hash.b ^= mum_mix(hash.c, SQRT_7);
+        hash.d ^= mum_mix(hash.a, SQRT_11);
 
-        hash.b = arx_l(hash.a, 31, H2_C2, hash.a & 0xFF);
-        hash.b ^= hash.d;
-
-        hash.d = arx_r(hash.c, hash.a, hash.d, 33);
-
-        hash.a ^= hash.c *
-                  sbox64(hash.d) *
-                  hash.d *
-                  h2_inner_hash(hash.c, H2_C2);
-
-        hash.b += hash.a ^ H2_C5;
-
-        hash.d = arx_l(hash.d, H2_C6, hash.a, 53);
-
-        hash.b = (arx_l(hash.b, hash.a, hash.d, 13) ^ H2_C7)+hash.a;
-
-        uint64_t x =
-            sbox64(hash.a ^ hash.b ^ hash.c ^ hash.d);
-
-        hash.c ^= (hash.c >> 13) +
-                  (hash.a << 17) +
-                  x;
-
-        hash.b ^= x ^ (hash.d>>13);
+        const uint64_t t0 = hash.a * SQRT_11;
+        const uint64_t t1 = hash.b * SQRT_7;
+        const uint64_t t2 = hash.c * SQRT_5;
+        const uint64_t t3 = hash.d * SQRT_2;
+        hash.a ^= t3; hash.b ^= t2; hash.c ^= t1; hash.d ^= t0;
+        for(int j=0;j<4;j++) hash.v[j] = mum_mix(hash.v[j], SQRT_11);
 
         for(int i=0;i<4;i++) {
-            hash.d = h2_inner_hash(hash.d, H2_C3);
-            hash.a = h2_inner_hash(hash.a, H2_C6);
-            hash.c = h2_inner_hash(hash.c, H2_C7);
-            hash.b = h2_inner_hash(hash.b, H2_C4);
-        }
+            for(int j=0;j<4;j++) {
+                hash.v[j] ^= (arx_r(hash.v[i], 11, SQRT_5, i+j) ^ SQRT_3) + size;
+            }
+            hash.v[i] = mum_mix(hash.v[i], SQRT_7);
+        }    
 
-        hash.a ^= hash.d;
-        hash.c ^= hash.b;
-        hash.d ^= (hash.a * H2_C1);
-        hash.b ^= (hash.c >> 13);
+        uint64_t ta = splitmix(hash.d);
+        uint64_t tb = splitmix(hash.c);
+        uint64_t tc = splitmix(hash.b);
+        uint64_t td = splitmix(hash.a);
+
+        hash.a ^= ta;
+        hash.b ^= tb;
+        hash.c ^= tc;
+        hash.d ^= td;
 
         return hash;
     }
 
     void reset()
     {
-        state = {0, 0, 0, 0};
+        state = {H2_C1, H2_C2, H2_C3, H2_C4};
         buffer_size = 0;
+        size = 0;
     }
 
 private:
-    uint256 state{0, 0, 0, 0};
+    uint256 state{H2_C1, H2_C2, H2_C3, H2_C4};
 
-    uint8_t buffer[8]{};
+    uint8_t buffer[32]{};
     size_t buffer_size = 0;
+    uint64_t size=0;
 };
 
 void H2_SMHasher(const void* key, int len, uint32_t seed, void* out)
